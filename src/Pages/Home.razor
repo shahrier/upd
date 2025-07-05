@@ -1,0 +1,600 @@
+﻿@using System.Text.Json
+@using UPD.Extensions
+@page "/"
+@inject IJSRuntime JsRuntime
+@inject NavigationManager NavManager
+
+<main class="upd-dashboard">
+    <aside class="upd-sidebar">
+        <h2>Managers</h2>
+        <ul>
+            @foreach (var mgr in PackageManagers)
+            {
+                <li class="@(mgr == SelectedManager ? "active" : "")" @onclick="() => SelectManager(mgr)">@mgr</li>
+            }
+        </ul>
+        <button class="refresh-btn" @onclick="RefreshAsync" disabled="@IsLoading">
+            <span>@(IsLoading ? "Refreshing..." : "Refresh")</span>
+        </button>
+        <button class="sysinfo-btn" @onclick="ShowSystemInfoModal">System Info</button>
+    </aside>
+    <section class="upd-main">
+        <header class="main-header">
+            <h1>Universal Package Dashboard</h1>
+            <input class="search" placeholder="Search packages..." @bind="SearchTerm" @bind:event="oninput" />
+            <div class="summary">
+                @foreach (var kv in Summary)
+                {
+                    <span class="summary-item">@kv.Key: <b>@kv.Value</b></span>
+                }
+            </div>
+        </header>
+        <div class="upd-content-scrollable">
+            @if (IsLoading)
+            {
+                <div class="loading">Scanning packages...</div>
+            }
+            else if (ErrorMsg != null)
+            {
+                <div class="error">@ErrorMsg</div>
+            }
+            else if (SelectedResult != null)
+            {
+                <h2>@SelectedResult.name</h2>
+                @if (SelectedResult.error != null)
+                {
+                    <div class="error">@SelectedResult.error</div>
+                }
+                else if (SelectedResult.packages != null)
+                {
+                    <table class="package-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Installed Version</th>
+                                <th>Latest Version</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var pkg in FilteredPackages)
+                            {
+                                <tr class="package-row" @onclick="() => ShowPackageDetailsAsync(pkg.Name)" style="cursor:pointer;">
+                                    <td>@pkg.Name</td>
+                                    <td>@pkg.Version</td>
+                                    <td>@(pkg.LatestVersion ?? "-")</td>
+                                    <td>
+                                        @if (SelectedManager != "pip3")
+                                        {
+                                            <button class="action-btn" @onclick:stopPropagation="true" @onclick="() => UpdatePackageAsync(pkg.Name)">Update</button>
+                                            <button class="action-btn uninstall" @onclick:stopPropagation="true" @onclick="() => UninstallPackageAsync(pkg.Name)">Uninstall</button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    @if (!FilteredPackages.Any())
+                    {
+                        <div class="no-results">No packages found.</div>
+                    }
+                }
+            }
+            @if (!string.IsNullOrWhiteSpace(ActionResultMsg))
+            {
+                <div class="action-result">@ActionResultMsg</div>
+            }
+        </div>
+        @if (ShowDetailsModal)
+        {
+            <div class="modal-backdrop" @onclick="CloseDetailsModal">
+                <div class="modal" @onclick:stopPropagation="true">
+                    @if (IsDetailsLoading)
+                    {
+                        <div class="loading">Loading package details...</div>
+                    }
+                    else if (DetailsError != null)
+                    {
+                        <div class="error">@DetailsError</div>
+                    }
+                    else if (CurrentDetails != null)
+                    {
+                        <h2>@CurrentDetails.name</h2>
+                        <p>@CurrentDetails.description</p>
+                        @if (!string.IsNullOrWhiteSpace(CurrentDetails.homepage))
+                        {
+                            <div><b>Homepage:</b> <a href="@CurrentDetails.homepage" target="_blank">@CurrentDetails.homepage</a></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(CurrentDetails.repository))
+                        {
+                            <div><b>Repository:</b> <a href="@CurrentDetails.repository" target="_blank">@CurrentDetails.repository</a></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(CurrentDetails.changelog))
+                        {
+                            <div><b>Changelog:</b> <a href="@CurrentDetails.changelog" target="_blank">@CurrentDetails.changelog</a></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(CurrentDetails.license))
+                        {
+                            <div><b>License:</b> @CurrentDetails.license</div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(CurrentDetails.author))
+                        {
+                            <div><b>Author:</b> @CurrentDetails.author</div>
+                        }
+                        @if (CurrentDetails.dependencies != null)
+                        {
+                            if (CurrentDetails.dependencies.Value.ValueKind == JsonValueKind.Object)
+                            {
+                                var depObj = CurrentDetails.dependencies.Value;
+                                var depList = depObj.EnumerateObject().ToList();
+                                if (depList.Count > 0)
+                                {
+                                    <div><b>Dependencies:</b>
+                                        <table class="dep-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Package</th>
+                                                    <th>Version</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var dep in depList)
+                                                {
+                                                    <tr>
+                                                        <td>@dep.Name</td>
+                                                        <td>@dep.Value.GetString()</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div><b>Dependencies:</b> <span>No dependencies</span></div>
+                                }
+                            }
+                            else if (CurrentDetails.dependencies.Value.ValueKind == JsonValueKind.Array)
+                            {
+                                var depArr = CurrentDetails.dependencies.Value.EnumerateArray().ToList();
+                                if (depArr.Count > 0)
+                                {
+                                    <div><b>Dependencies:</b>
+                                        <table class="dep-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Dependency</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var dep in depArr)
+                                                {
+                                                    <tr>
+                                                        <td>@dep.GetString()</td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div><b>Dependencies:</b> <span>No dependencies</span></div>
+                                }
+                            }
+                            else
+                            {
+                                <div><b>Dependencies:</b>
+                                    <pre>@CurrentDetails.dependencies.ToString()</pre>
+                                </div>
+                            }
+                        }
+                    }
+                    <button class="close-btn" @onclick="CloseDetailsModal">×</button>
+                </div>
+            </div>
+        }
+        @if (ShowSystemInfoModalFlag)
+        {
+            <div class="modal-backdrop" @onclick="CloseSystemInfoModal">
+                <div class="modal" @onclick:stopPropagation="true">
+                    @if (IsSystemInfoLoading)
+                    {
+                        <div class="loading">Loading system info...</div>
+                    }
+                    else if (SystemInfoError != null)
+                    {
+                        <div class="error">@SystemInfoError</div>
+                    }
+                    else if (SystemInfo != null)
+                    {
+                        <h2>System Info</h2>
+                        <div><b>OS:</b> @SystemInfo.GetPropertyStringOrDefault("os") @SystemInfo.GetPropertyStringOrDefault("os_version")</div>
+                        <div><b>Kernel:</b> @SystemInfo.GetPropertyStringOrDefault("kernel_version")</div>
+                        <div><b>CPU:</b> @SystemInfo.GetPropertyStringOrDefault("cpu_brand") (@SystemInfo.GetPropertyStringOrDefault("cpu_cores") cores)</div>
+                        <div><b>Memory:</b> @FormatBytes(((JsonElement?)SystemInfo).GetPropertyStringOrDefault("used_memory")) / @FormatBytes(((JsonElement?)SystemInfo).GetPropertyStringOrDefault("total_memory"))</div>
+                        <div><b>Shell:</b> @SystemInfo.GetPropertyStringOrDefault("shell")</div>
+                        <div><b>Tool Versions:</b>
+                            <ul>
+                                @foreach (var kv in SystemInfo.GetPropertyDictOrDefault("versions"))
+                                {
+                                    <li><b>@kv.Key:</b> @kv.Value</li>
+                                }
+                            </ul>
+                        </div>
+                        <div><b>Disks:</b>
+                            <ul>
+                                @foreach (var disk in SystemInfo.GetPropertyArrayOrDefault("disks"))
+                                {
+                                    <li>@((JsonElement?)disk).GetPropertyStringOrDefault("name") - @((JsonElement?)disk).GetPropertyStringOrDefault("type") - @((JsonElement?)disk).GetPropertyStringOrDefault("available_space") / @((JsonElement?)disk).GetPropertyStringOrDefault("total_space") bytes free</li>
+                                }
+                            </ul>
+                        </div>
+                        <details>
+                            <summary>Environment Variables</summary>
+                            <table class="env-table">
+                                <thead><tr><th>Key</th><th>Value</th></tr></thead>
+                                <tbody>
+                                @foreach (var kv in SystemInfo.GetEnvVarsDict())
+                                {
+                                    <tr><td>@kv.Key</td><td>@kv.Value</td></tr>
+                                }
+                                </tbody>
+                            </table>
+                        </details>
+                    }
+                    <button class="close-btn" @onclick="CloseSystemInfoModal">×</button>
+                </div>
+            </div>
+        }
+    </section>
+</main>
+
+<style>
+.dep-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5em;
+}
+.dep-table th, .dep-table td {
+  border: 1px solid #ddd;
+  padding: 0.4em 0.7em;
+}
+.dep-table th {
+  background: #f5f5f5;
+  font-weight: bold;
+}
+.modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal {
+  background: #fff;
+  border-radius: 8px;
+  max-width: 900px;
+  width: 95vw;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 2em 1.5em 1.5em 1.5em;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  position: relative;
+}
+.close-btn {
+  position: absolute;
+  top: 0.7em;
+  right: 1em;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  width: 2em;
+  height: 2em;
+  font-size: 1.5em;
+  color: #888;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+.close-btn:hover {
+  background: #eee;
+  color: #222;
+}
+.sysinfo-btn {
+  margin-top: 1em;
+  width: 100%;
+  padding: 0.7em 0;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.sysinfo-btn:hover {
+  background: #eaeaea;
+}
+.env-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5em;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.env-table th, .env-table td {
+  border: 1px solid #ddd;
+  padding: 0.4em 0.7em;
+  word-break: break-all;
+  white-space: pre;
+}
+.env-table th {
+  background: #f5f5f5;
+  font-weight: bold;
+}
+.main-header {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 10;
+  padding-bottom: 0.5em;
+  margin-bottom: 0.5em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1em;
+}
+.main-header-actions {
+  display: flex;
+  gap: 0.7em;
+}
+.upd-content-scrollable {
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  padding: 1.5em;
+}
+</style>
+
+@code {
+    private class PackageManagerResult
+    {
+        public string name { get; set; } = string.Empty;
+        public bool detected { get; set; }
+        public string? error { get; set; }
+        public object? packages { get; set; }
+    }
+    private class PackageEntry
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Version { get; set; } = string.Empty;
+        public string? LatestVersion { get; set; } // Placeholder for now
+    }
+    private class PackageActionResult
+    {
+        public string manager { get; set; } = string.Empty;
+        public string action { get; set; } = string.Empty;
+        public string package { get; set; } = string.Empty;
+        public bool success { get; set; }
+        public string? error { get; set; }
+        public string? output { get; set; }
+    }
+
+    private List<PackageManagerResult> Results = new();
+    private string[] PackageManagers => Results.Select(r => r.name).ToArray();
+    private string? SelectedManager { get; set; }
+    private PackageManagerResult? SelectedResult => Results.FirstOrDefault(r => r.name == SelectedManager);
+    private List<PackageEntry> FilteredPackages => GetFilteredPackages();
+    private string SearchTerm { get; set; } = string.Empty;
+    private bool IsLoading { get; set; } = false;
+    private string? ErrorMsg { get; set; }
+    private string ActionResultMsg { get; set; } = string.Empty;
+    private Dictionary<string, int> Summary => Results.ToDictionary(r => r.name, r => GetPackageCount(r));
+    private bool ShowDetailsModal = false;
+    private bool IsDetailsLoading = false;
+    private string? DetailsError = null;
+    private PackageDetails? CurrentDetails = null;
+    private bool ShowSystemInfoModalFlag = false;
+    private bool IsSystemInfoLoading = false;
+    private string? SystemInfoError = null;
+    private JsonElement? SystemInfo = null;
+
+    protected override void OnInitialized()
+    {
+        // No changes to existing initialization code
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        IsLoading = true;
+        ErrorMsg = null;
+        ActionResultMsg = string.Empty;
+        StateHasChanged();
+        try
+        {
+            var results = await JsRuntime.InvokeAsync<PackageManagerResult[]>("__TAURI__.core.invoke", "scan_package_managers");
+            Results = results.ToList();
+            SelectedManager ??= Results.FirstOrDefault()?.name;
+        }
+        catch (Exception ex)
+        {
+            ErrorMsg = ex.Message;
+        }
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private void SelectManager(string mgr)
+    {
+        SelectedManager = mgr;
+        SearchTerm = string.Empty;
+        ActionResultMsg = string.Empty;
+    }
+
+    private async Task UpdatePackageAsync(string name)
+    {
+        if (SelectedManager == null) return;
+        IsLoading = true;
+        ActionResultMsg = string.Empty;
+        StateHasChanged();
+        try
+        {
+            var result = await JsRuntime.InvokeAsync<PackageActionResult>("__TAURI__.core.invoke", "package_action", new { manager = SelectedManager, action = "update", package = name });
+            ActionResultMsg = result.success ? $"Updated {name} successfully." : $"Failed to update: {result.error ?? result.output}";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            ActionResultMsg = $"Error: {ex.Message}";
+        }
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task UninstallPackageAsync(string name)
+    {
+        if (SelectedManager == null) return;
+        IsLoading = true;
+        ActionResultMsg = string.Empty;
+        StateHasChanged();
+        try
+        {
+            var result = await JsRuntime.InvokeAsync<PackageActionResult>("__TAURI__.core.invoke", "package_action", new { manager = SelectedManager, action = "uninstall", package = name });
+            ActionResultMsg = result.success ? $"Uninstalled {name} successfully." : $"Failed to uninstall: {result.error ?? result.output}";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            ActionResultMsg = $"Error: {ex.Message}";
+        }
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private List<PackageEntry> GetFilteredPackages()
+    {
+        if (SelectedResult == null || SelectedResult.packages == null)
+            return new();
+        var pkgs = new List<PackageEntry>();
+        if (SelectedResult.packages is System.Text.Json.JsonElement elem && elem.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var el in elem.EnumerateArray())
+            {
+                var name = el.TryGetProperty("name", out var n) ? n.GetString() : null;
+                var ver = el.TryGetProperty("version", out var v) ? v.GetString() : null;
+                var latest = el.TryGetProperty("latest_version", out var l) ? l.GetString() : null;
+                if (!string.IsNullOrEmpty(name))
+                    pkgs.Add(new PackageEntry { Name = name!, Version = ver ?? "", LatestVersion = latest });
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(SearchTerm))
+            pkgs = pkgs.Where(p => p.Name.Contains(SearchTerm, StringComparison.OrdinalIgnoreCase)).ToList();
+        return pkgs;
+    }
+
+    private int GetPackageCount(PackageManagerResult r)
+    {
+        try
+        {
+            if (r.packages is System.Text.Json.JsonElement elem && elem.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                return elem.GetArrayLength();
+            }
+        }
+        catch { }
+        return 0;
+    }
+
+    private async Task ShowPackageDetailsAsync(string name)
+    {
+        if (SelectedManager == null) return;
+        ShowDetailsModal = true;
+        IsDetailsLoading = true;
+        DetailsError = null;
+        CurrentDetails = null;
+        StateHasChanged();
+        try
+        {
+            var details = await JsRuntime.InvokeAsync<PackageDetails>("__TAURI__.core.invoke", "get_package_details", new { manager = SelectedManager, package = name });
+            CurrentDetails = details;
+        }
+        catch (Exception ex)
+        {
+            DetailsError = ex.Message;
+        }
+        IsDetailsLoading = false;
+        StateHasChanged();
+    }
+
+    private void CloseDetailsModal()
+    {
+        ShowDetailsModal = false;
+        DetailsError = null;
+        CurrentDetails = null;
+    }
+
+    private async void ShowSystemInfoModal()
+    {
+        ShowSystemInfoModalFlag = true;
+        IsSystemInfoLoading = true;
+        SystemInfoError = null;
+        SystemInfo = null;
+        StateHasChanged();
+        try
+        {
+            var info = await JsRuntime.InvokeAsync<JsonElement>("__TAURI__.core.invoke", "get_system_info");
+            SystemInfo = info;
+        }
+        catch (Exception ex)
+        {
+            SystemInfoError = ex.Message;
+        }
+        IsSystemInfoLoading = false;
+        StateHasChanged();
+    }
+
+    private void CloseSystemInfoModal()
+    {
+        ShowSystemInfoModalFlag = false;
+        SystemInfoError = null;
+        SystemInfo = null;
+    }
+
+    private class PackageDetails
+    {
+        public string name { get; set; } = string.Empty;
+        public string? description { get; set; }
+        public string? homepage { get; set; }
+        public string? changelog { get; set; }
+        public string? repository { get; set; }
+        public string? license { get; set; }
+        public string? author { get; set; }
+        public JsonElement? dependencies { get; set; }
+        public JsonElement? raw { get; set; }
+    }
+
+    @functions {
+        private static string FormatBytes(object? bytesObj)
+        {
+            if (bytesObj == null) return "-";
+            if (long.TryParse(bytesObj.ToString(), out var bytes))
+            {
+                double gb = bytes / 1024.0 / 1024.0 / 1024.0;
+                return $"{gb:F1} GB";
+            }
+            return bytesObj.ToString() ?? "-";
+        }
+    }
+}
