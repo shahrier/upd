@@ -58,7 +58,13 @@ cargo tauri build
 ---
 
 ## 🖥️ Screenshots
-_Add screenshots here_
+
+![Screenshot 1](dist/wwwroot/img/Screenshot_1.png)
+![Screenshot 2](dist/wwwroot/img/Screenshot_2.png)
+![Screenshot 3](dist/wwwroot/img/Screenshot_3.png)
+![Screenshot 4](dist/wwwroot/img/Screenshot_4.png)
+![Screenshot 5](dist/wwwroot/img/Screenshot_5.png)
+![Screenshot 6](dist/wwwroot/img/Screenshot_6.png)
 
 ---
 
