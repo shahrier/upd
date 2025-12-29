@@ -33,7 +33,7 @@ A modern, cross-platform desktop app to view, update, and manage packages from m
 
 # Start the Tauri app (dev mode)
  cd src-tauri
- tauri dev
+ cargo-tauri dev
 ```
 
 ---
