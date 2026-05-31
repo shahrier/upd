@@ -78,16 +78,4 @@ MIT
 
 ---
 
-## 💡 Roadmap / Ideas
-- Add install package support
-- More package managers
-- Auto-update checks
-
----
-
-## Author
-[Shahrier Emon](https://github.com/shahrier)
-
----
-
 ## ⭐ If you like it, star it!
